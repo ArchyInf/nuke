@@ -47,16 +47,25 @@ namespace Nuke.Common.Git
         /// </summary>
         public static GitRepository FromLocalDirectory(string directory)
         {
-            var rootDirectory = FileSystemTasks.FindParentDirectory(directory, x => x.GetDirectories(".git").Any());
-            ControlFlow.Assert(rootDirectory != null, $"Could not find git directory for '{directory}'.");
-            var gitDirectory = Path.Combine(rootDirectory, ".git");
+            var absoluteDirectory = Path.IsPathRooted(directory) ? (AbsolutePath)directory : NukeBuild.RootDirectory / directory;
+            var rootDirectoryRaw = Tools.Git.GitTasks.Git("rev-parse --show-toplevel", directory, logOutput: false, logInvocation: false).First().Text;
+            var rootDirectory = Path.IsPathRooted(rootDirectoryRaw) ? (AbsolutePath)rootDirectoryRaw : absoluteDirectory / rootDirectoryRaw;
+            ControlFlow.Assert(Directory.Exists(rootDirectory), $"Could not find git directory for '{directory}'.");
+           
+            var gitDirRaw = Tools.Git.GitTasks.Git("rev-parse --git-dir", rootDirectory, logOutput: false, logInvocation: false).First().Text;
+            var gitDirectory = Path.IsPathRooted(gitDirRaw) ? (AbsolutePath)gitDirRaw : rootDirectory / gitDirRaw;
+            ControlFlow.Assert(Directory.Exists(gitDirectory), $"Could not find git directory for '{rootDirectory}'.");
+
+            var commonDirRaw = Tools.Git.GitTasks.Git("rev-parse --git-common-dir", rootDirectory, logOutput: false, logInvocation: false).First().Text;
+            var commonDirectory = !Path.IsPathRooted(commonDirRaw) ? rootDirectory / commonDirRaw : (AbsolutePath)commonDirRaw;
+            ControlFlow.Assert(Directory.Exists(commonDirectory), $"Could not find git directory for '{rootDirectory}'.");
 
             var head = GetHead(gitDirectory);
             var branch = ((Host.Instance as IBuildServer)?.Branch ?? GetHeadIfAttached(head))?.TrimStart("refs/heads/").TrimStart("origin/");
-            var commit = (Host.Instance as IBuildServer)?.Commit ?? GetCommitFromHead(gitDirectory, head);
-            var tags = GetTagsFromCommit(gitDirectory, commit);
-            var (remoteName, remoteBranch) = GetRemoteNameAndBranch(gitDirectory, branch);
-            var (protocol, endpoint, identifier) = GetRemoteConnectionFromConfig(gitDirectory, remoteName ?? FallbackRemoteName);
+            var commit = (Host.Instance as IBuildServer)?.Commit ?? GetCommitFromHead(commonDirectory, head);
+            var tags = GetTagsFromCommit(commonDirectory, commit);
+            var (remoteName, remoteBranch) = GetRemoteNameAndBranch(commonDirectory, branch);
+            var (protocol, endpoint, identifier) = GetRemoteConnectionFromConfig(commonDirectory, remoteName ?? FallbackRemoteName);
 
             return new GitRepository(
                 protocol,
